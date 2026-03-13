@@ -5,5 +5,5 @@ scikit-learn
 tqdm
 numpy
 Pillow
-#oull merge test
+#okay now i can see the file
 
