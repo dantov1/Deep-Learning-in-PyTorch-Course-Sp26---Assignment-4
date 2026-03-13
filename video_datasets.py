@@ -19,7 +19,7 @@ import os
 import glob
 from tqdm import tqdm
 import numpy as np
-from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import GroupShuffleSplit 
 
 
 class VideoDataset(Dataset):
@@ -104,10 +104,10 @@ def load_dataset(frame_dir):
 
 def dataset_split(vid_dataset, tr_ratio, ts_ratio, seed=0):
     """
-    Split the dataset into training, validation, and test sets using stratified sampling.
+    Split the dataset into training, validation, and test sets using group-aware sampling.
     
-    This function uses StratifiedShuffleSplit to ensure that each split has a representative
-    distribution of classes.
+    This function uses GroupShuffleSplit to ensure that clips from the same source video
+    stay together in the same split, preventing data leakage.
     
     Args:
         vid_dataset (dict): Dictionary mapping video paths to labels.
@@ -123,20 +123,44 @@ def dataset_split(vid_dataset, tr_ratio, ts_ratio, seed=0):
     """
     vid_paths = np.array([vid_path for vid_path in vid_dataset.keys()])
     vid_labels = np.array([vid_label for vid_label in vid_dataset.values()])
-    print('Splitting train/validation/test datasets....')
+    
+    # Extract group ID from each video path
+    # This groups clips from the same source video together
+    def get_group_id(path):
+        """
+        Extract group identifier from video path.
+        
+        Example path: /data/HMDB51/punch/video_001_clip_1
+        Group ID: punch_video_001 (category + base video name)
+        
+        Adjust this function based on your actual path structure!
+        """
+        parts = path.replace('\\', '/').split('/')
+        category = parts[-2]           # e.g., "punch"
+        video_name = parts[-1]         # e.g., "video_001_clip_1"
+        
+        # Remove clip suffix if present (adjust pattern as needed)
+        base_name = video_name.split('_clip')[0]  # e.g., "video_001"
+        
+        return f"{category}_{base_name}"
+    
+    groups = np.array([get_group_id(p) for p in vid_paths])
+    
+    print('Splitting train/validation/test datasets (group-aware)....')
 
-    # Test split using StratifiedShuffleSplit
-    ts_spliter = StratifiedShuffleSplit(n_splits=1, test_size=ts_ratio, random_state=seed)
-    for tr_val_idx, ts_idx in ts_spliter.split(vid_paths, vid_labels):
+    # Test split using GroupShuffleSplit
+    ts_splitter = GroupShuffleSplit(n_splits=1, test_size=ts_ratio, random_state=seed)
+    for tr_val_idx, ts_idx in ts_splitter.split(vid_paths, vid_labels, groups):  # ← Added groups!
         ts_paths, ts_labels = vid_paths[ts_idx], vid_labels[ts_idx]
         tr_val_paths, tr_val_labels = vid_paths[tr_val_idx], vid_labels[tr_val_idx]
+        tr_val_groups = groups[tr_val_idx]  # ← Keep groups for next split!
     ts_dataset = [(ts_path, ts_label) for ts_path, ts_label in zip(ts_paths, ts_labels)]
 
     # Train/validation split
     val_ratio = 1 - tr_ratio - ts_ratio
     val_wt = val_ratio / (tr_ratio + val_ratio)
-    val_spliter = StratifiedShuffleSplit(n_splits=1, test_size=val_wt, random_state=seed)
-    for tr_idx, val_idx in val_spliter.split(tr_val_paths, tr_val_labels):
+    val_splitter = GroupShuffleSplit(n_splits=1, test_size=val_wt, random_state=seed)
+    for tr_idx, val_idx in val_splitter.split(tr_val_paths, tr_val_labels, tr_val_groups):  # ← Added groups!
         tr_paths, tr_labels = tr_val_paths[tr_idx], tr_val_labels[tr_idx]
         val_paths, val_labels = tr_val_paths[val_idx], tr_val_labels[val_idx]
     tr_dataset = [(tr_path, tr_label) for tr_path, tr_label in zip(tr_paths, tr_labels)]
