@@ -1,6 +1,6 @@
 """
 Module: run.py
-
+can i see this
 This module is the main entry point for training or evaluating a video classification model.
 It uses command-line arguments to configure the experiment, including dataset paths, model parameters,
 and training hyperparameters. Depending on the selected mode ('train' or 'eval'), it performs
