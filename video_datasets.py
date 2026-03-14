@@ -3,9 +3,10 @@ Module: video_datasets.py
 
 This module provides classes and functions for loading and processing video datasets,
 splitting them into training, validation, and test sets, and preparing data for video
-classification models. It includes a custom PyTorch Dataset for videos stored as directories
-of frame images, functions to load the dataset from a directory structure, split the dataset
-using stratified sampling, and custom collate functions for handling variable-length video sequences.
+classification models. It includes a custom PyTorch Dataset for videos stored as
+directories of frame images, functions to load the dataset from a directory structure,
+split the dataset using stratified sampling, and custom collate functions for handling
+variable-length video sequences.
 """
 
 import torch
@@ -19,7 +20,7 @@ import os
 import glob
 from tqdm import tqdm
 import numpy as np
-from sklearn.model_selection import GroupShuffleSplit 
+from sklearn.model_selection import GroupShuffleSplit
 
 
 class VideoDataset(Dataset):
@@ -27,12 +28,12 @@ class VideoDataset(Dataset):
     PyTorch Dataset class for loading video data from directories of frame images.
     
     Each video is represented as a directory containing JPEG images of its frames.
-    The dataset is provided as a dictionary mapping each video directory path to its label.
-    
+    The dataset is provided as a list of (video_dir_path, label) tuples.
+
     Args:
-        vid_dataset (dict): Dictionary where keys are video directory paths and values are integer labels.
+        vid_dataset (list): List of (video_dir_path, label) tuples.
         fr_per_vid (int): Number of frames per video to load (images are taken in order).
-        transforms (callable, optional): A function/transform to apply to each frame image (e.g., resizing, normalization).
+        transforms (callable, optional): A function/transform to apply to each frame image.
     """
     def __init__(self, vid_dataset, fr_per_vid, transforms=None):
         self.dataset = vid_dataset
@@ -50,13 +51,13 @@ class VideoDataset(Dataset):
         
         Args:
             idx (int): Index of the sample.
-            
+        
         Returns:
             tuple: (frames_tensor, label) where frames_tensor is a tensor of shape (T, C, H, W)
                    with T being the number of frames (up to fr_per_vid) and label is an integer.
         """
-        # Get all JPEG frame paths from the video directory and select up to fr_per_vid frames
-        fr_paths = glob.glob(self.dataset[idx][0] + '/*.jpg')
+        # FIX: sort glob results so frames are in deterministic order (frame0, frame1, ...)
+        fr_paths = sorted(glob.glob(self.dataset[idx][0] + '/*.jpg'))
         fr_paths = fr_paths[:self.fpv]
         
         # Open images using PIL
@@ -80,12 +81,10 @@ def load_dataset(frame_dir):
     Load the full video dataset from the specified directory.
     
     Each subdirectory in frame_dir is assumed to correspond to a video category.
-    The function builds a dictionary where keys are paths to video directories and
-    values are integer labels corresponding to each category.
-    
+
     Args:
         frame_dir (str): Path to the directory containing subdirectories for each video category.
-    
+
     Returns:
         tuple: (vid_dataset, label_dict)
             - vid_dataset (dict): Dictionary mapping video directory paths to integer labels.
@@ -108,13 +107,13 @@ def dataset_split(vid_dataset, tr_ratio, ts_ratio, seed=0):
     
     This function uses GroupShuffleSplit to ensure that clips from the same source video
     stay together in the same split, preventing data leakage.
-    
+
     Args:
         vid_dataset (dict): Dictionary mapping video paths to labels.
         tr_ratio (float): Proportion of the data to use for training.
         ts_ratio (float): Proportion of the data to use for testing.
         seed (int, optional): Random seed for reproducibility. Default is 0.
-    
+
     Returns:
         tuple: (tr_dataset, val_dataset, ts_dataset)
             - tr_dataset (list): List of (video_path, label) tuples for the training set.
@@ -125,19 +124,16 @@ def dataset_split(vid_dataset, tr_ratio, ts_ratio, seed=0):
     vid_labels = np.array([vid_label for vid_label in vid_dataset.values()])
     
     # Extract group ID from each video path
-    # This groups clips from the same source video together
     def get_group_id(path):
         """
         Extract group identifier from video path.
         
         Example path: /data/HMDB51/punch/video_001_clip_1
         Group ID: punch_video_001 (category + base video name)
-        
-        Adjust this function based on your actual path structure!
         """
         parts = path.replace('\\', '/').split('/')
-        category = parts[-2]           # e.g., "punch"
-        video_name = parts[-1]         # e.g., "video_001_clip_1"
+        category = parts[-2]          # e.g., "punch"
+        video_name = parts[-1]        # e.g., "video_001_clip_1"
         
         # Remove clip suffix if present (adjust pattern as needed)
         base_name = video_name.split('_clip')[0]  # e.g., "video_001"
@@ -150,17 +146,17 @@ def dataset_split(vid_dataset, tr_ratio, ts_ratio, seed=0):
 
     # Test split using GroupShuffleSplit
     ts_splitter = GroupShuffleSplit(n_splits=1, test_size=ts_ratio, random_state=seed)
-    for tr_val_idx, ts_idx in ts_splitter.split(vid_paths, vid_labels, groups):  # ← Added groups!
+    for tr_val_idx, ts_idx in ts_splitter.split(vid_paths, vid_labels, groups):
         ts_paths, ts_labels = vid_paths[ts_idx], vid_labels[ts_idx]
         tr_val_paths, tr_val_labels = vid_paths[tr_val_idx], vid_labels[tr_val_idx]
-        tr_val_groups = groups[tr_val_idx]  # ← Keep groups for next split!
+        tr_val_groups = groups[tr_val_idx]
     ts_dataset = [(ts_path, ts_label) for ts_path, ts_label in zip(ts_paths, ts_labels)]
 
     # Train/validation split
     val_ratio = 1 - tr_ratio - ts_ratio
     val_wt = val_ratio / (tr_ratio + val_ratio)
     val_splitter = GroupShuffleSplit(n_splits=1, test_size=val_wt, random_state=seed)
-    for tr_idx, val_idx in val_splitter.split(tr_val_paths, tr_val_labels, tr_val_groups):  # ← Added groups!
+    for tr_idx, val_idx in val_splitter.split(tr_val_paths, tr_val_labels, tr_val_groups):
         tr_paths, tr_labels = tr_val_paths[tr_idx], tr_val_labels[tr_idx]
         val_paths, val_labels = tr_val_paths[val_idx], tr_val_labels[val_idx]
     tr_dataset = [(tr_path, tr_label) for tr_path, tr_label in zip(tr_paths, tr_labels)]
@@ -172,19 +168,6 @@ def dataset_split(vid_dataset, tr_ratio, ts_ratio, seed=0):
 def collate_fn_r3d_18(batch):
     """
     Collate function for 3D CNN models (e.g., R3D-18).
-    
-    Assumes each sample in the batch is a tuple (video_frames, label),
-    where video_frames is a tensor of shape (T, C, H, W). This function filters out any samples
-    with no frames, stacks the video frame tensors, transposes the tensor dimensions as needed,
-    and stacks the labels.
-    
-    Args:
-        batch (list): List of samples, each as (video_frames, label).
-    
-    Returns:
-        tuple: (imgs_tensor, labels_tensor)
-            - imgs_tensor (Tensor): Stacked video frames tensor with shape adjusted for R3D-18.
-            - labels_tensor (Tensor): Tensor of labels.
     """
     imgs_batch, label_batch = list(zip(*batch))
     imgs_batch = [imgs for imgs in imgs_batch if len(imgs) > 0]
@@ -199,33 +182,21 @@ def collate_fn_rnn(batch):
     """
     Collate function for RNN-based models.
     
-    Handles variable-length video sequences by padding them to the length of the longest sequence
-    in the batch. Each sample in the batch is expected to be a tuple (video_frames, label),
-    where video_frames is a tensor of shape (T, C, H, W). The function returns a padded tensor
-    of video frames with shape (batch_size, max_T, C, H, W) and a tensor of labels.
-    
-    Args:
-        batch (list): List of samples, each as (video_frames, label).
-    
-    Returns:
-        tuple: (padded_imgs, labels_tensor)
-            - padded_imgs (Tensor): Padded tensor of video frames.
-            - labels_tensor (Tensor): Tensor of labels.
+    Handles variable-length video sequences by padding them to the length of the longest
+    sequence in the batch.
     """
-    # Unzip the batch into image tensors and labels
     imgs_batch, label_batch = list(zip(*batch))
-    
+
     # Filter out any samples that have no frames
     valid_samples = [(imgs, label) for imgs, label in zip(imgs_batch, label_batch) if len(imgs) > 0]
     if not valid_samples:
         return None, None
     imgs_batch, label_batch = zip(*valid_samples)
-    
+
     # Pad the video frame tensors along the time dimension (T)
-    # Resulting shape: (batch_size, max_T, C, H, W)
     padded_imgs = pad_sequence(imgs_batch, batch_first=True)
-    
+
     # Convert labels to a tensor
     labels_tensor = torch.tensor(label_batch)
-    
+
     return padded_imgs, labels_tensor
