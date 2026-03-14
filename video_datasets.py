@@ -48,17 +48,18 @@ class VideoDataset(Dataset):
         """
         Load frames from the video directory corresponding to the given index, apply transforms,
         and return the stacked tensor of frames along with its label.
-        
-        Args:
-            idx (int): Index of the sample.
-        
-        Returns:
-            tuple: (frames_tensor, label) where frames_tensor is a tensor of shape (T, C, H, W)
-                   with T being the number of frames (up to fr_per_vid) and label is an integer.
         """
-        # FIX: sort glob results so frames are in deterministic order (frame0, frame1, ...)
         fr_paths = sorted(glob.glob(self.dataset[idx][0] + '/*.jpg'))
-        fr_paths = fr_paths[:self.fpv]
+        
+        # Ensure exactly self.fpv frames (pad by repeating last frame if needed)
+        if len(fr_paths) == 0:
+            raise ValueError(f"No frames found in {self.dataset[idx][0]}")
+        
+        if len(fr_paths) < self.fpv:
+            # Repeat last frame to reach desired count
+            fr_paths = fr_paths + [fr_paths[-1]] * (self.fpv - len(fr_paths))
+        else:
+            fr_paths = fr_paths[:self.fpv]
         
         # Open images using PIL
         fr_imgs = [Image.open(fr_path) for fr_path in fr_paths]
@@ -66,12 +67,14 @@ class VideoDataset(Dataset):
         # Get the label associated with the video
         fr_label = self.dataset[idx][1]
         
-        # Apply transforms to each frame if provided, else keep original images
-        fr_imgs_trans = [self.transforms(fr_img) for fr_img in fr_imgs] if self.transforms else fr_imgs
+        # Apply transforms to each frame if provided
+        if self.transforms:
+            fr_imgs_trans = [self.transforms(fr_img) for fr_img in fr_imgs]
+        else:
+            fr_imgs_trans = fr_imgs
 
-        # Stack transformed images into a tensor if available
-        if len(fr_imgs_trans) > 0:
-            fr_imgs_trans = torch.stack(fr_imgs_trans)
+        # Stack transformed images into a tensor
+        fr_imgs_trans = torch.stack(fr_imgs_trans)
 
         return fr_imgs_trans, fr_label
 
